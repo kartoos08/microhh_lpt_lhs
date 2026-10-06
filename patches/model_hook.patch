@@ -1,0 +1,47 @@
+# Integration points against MicroHH main, verified 2026-09-29.
+# Annotated patch sketch: the LPT class is an extension and does not exist upstream.
+
+--- include/model.h
++++ include/model.h
+@@
+ template<typename> class Particle_bin;
++namespace Lpt { template<typename> class Droplets; }
+@@
+     std::shared_ptr<Particle_bin<TF>> particle_bin;
++    std::shared_ptr<Lpt::Droplets<TF>> lpt_droplets;
+
+--- src/model.cxx
++++ src/model.cxx
+@@ includes
+ #include "particle_bin.h"
++#include "lpt_droplets.h"
++#include "entrainment_initializer.h"
+@@ Model<TF>::Model(...)
+     particle_bin = std::make_shared<Particle_bin<TF>>(master, *grid, *fields, *input);
++    lpt_droplets = std::make_shared<Lpt::Droplets<TF>>(master, *grid, *fields, *input);
+@@ Model<TF>::init()
+     background->init(*input_nc);
++    lpt_droplets->init();
+@@ Model<TF>::load(), after fields->load() and before time integration
+     particle_bin->create(*timeloop);
++    lpt_droplets->create(*timeloop);
+@@ Model<TF>::save(), immediately after fields->create(*input, *input_nc)
+     fields->create(*input, *input_nc);
++    Lpt::apply_entrainment_initial_condition(*grid, *fields, *input);
+@@ Model<TF>::exec(), after microphysics and before advection/diffusion
+     microphys->exec(*thermo, timeloop->get_dt(), *stats);
++    lpt_droplets->exec(timeloop->get_sub_time_step(), *stats);
+@@ Model<TF>::prepare_gpu()
+     microphys->prepare_device();
++    lpt_droplets->prepare_device();
+@@ every place GPU state is copied to host for output/restart
+     microphys->backward_device();
++    lpt_droplets->backward_device();
+@@ Model<TF>::clear_gpu()
+     microphys->clear_device();
++    lpt_droplets->clear_device();
+
+# Also add particle restart save/load before using production restarts.
+# A true tri-periodic Eulerian box additionally requires periodic-z boundary
+# handling AND a pressure/Poisson solver consistent with periodic z. Periodic
+# wrapping in lpt_microphysics.cu does not make stock MicroHH periodic in z.

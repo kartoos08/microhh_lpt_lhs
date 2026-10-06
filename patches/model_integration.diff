@@ -1,0 +1,58 @@
+diff --git a/include/model.h b/include/model.h
+--- a/include/model.h
++++ b/include/model.h
+@@
+ template<typename> class Particle_bin;
++template<typename> class Lpt_droplets;
++template<typename> class Spectral_linear_force;
+@@
+         std::shared_ptr<Particle_bin<TF>> particle_bin;
++        std::shared_ptr<Lpt_droplets<TF>> lpt_droplets;
++        std::shared_ptr<Spectral_linear_force<TF>> spectral_linear_force;
+
+diff --git a/src/model.cxx b/src/model.cxx
+--- a/src/model.cxx
++++ b/src/model.cxx
+@@
+ #include "particle_bin.h"
++#include "lpt_droplets.h"
++#include "spectral_linear_force.h"
+@@
+         particle_bin = std::make_shared<Particle_bin<TF>>(master, *grid, *fields, *input);
++        lpt_droplets = std::make_shared<Lpt_droplets<TF>>(master, *grid, *fields, *input);
++        spectral_linear_force = std::make_shared<Spectral_linear_force<TF>>(master, *grid, *fields, *input);
+@@
+     background->init(*input_nc);
++    lpt_droplets->init();
++    spectral_linear_force->init();
+@@
+     particle_bin->create(*timeloop);
++    lpt_droplets->create();
+@@
+                 setup_stats();
++
++                // Operator-split LPT update ONCE per complete RK time step.
++                // Do not call with get_sub_time_step(): low-storage RK cB values
++                // do not sum to one.  The exact Stokes-drag update in Lpt_droplets
++                // keeps the tau_p << dt tracer limit stable.  For publication runs,
++                // verify time-step convergence of this first-order particle/fluid split.
++                if (timeloop->get_substep() == 0)
++                    lpt_droplets->exec(timeloop->get_dt());
+@@
+                 // Apply the large scale forcings. Keep this one always right before the pressure.
+                 force->exec(timeloop->get_sub_time_step(), *thermo, *stats);
++                // Adds f_hat=alpha*u_hat in the requested low-k shell; alpha is
++                // normalized so <u.f>=epsilon. It is a tendency and therefore
++                // participates in MicroHH's native low-storage RK integration.
++                spectral_linear_force->exec();
+@@
+     aerosol  ->prepare_device();
++    lpt_droplets->prepare_device();
++    spectral_linear_force->prepare_device();
+@@
+     aerosol  ->clear_device();
++    lpt_droplets->clear_device();
++    spectral_linear_force->clear_device();
+@@
+     timeloop->set_time_step_limit(particle_bin->get_time_limit());
++    timeloop->set_time_step_limit(lpt_droplets->get_time_limit(timeloop->get_idt(), timeloop->get_dt()));
